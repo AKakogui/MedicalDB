@@ -1,0 +1,230 @@
+{
+  "entities": {
+    "Patient": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Patient",
+      "type": "object",
+      "description": "Represents a patient with their medical information.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the patient entity."
+        },
+        "firstName": {
+          "type": "string",
+          "description": "Patient's first name."
+        },
+        "lastName": {
+          "type": "string",
+          "description": "Patient's last name."
+        },
+        "dateOfBirth": {
+          "type": "string",
+          "description": "Patient's date of birth.",
+          "format": "date-time"
+        },
+        "email": {
+          "type": "string",
+          "description": "Patient's email address.",
+          "format": "email"
+        }
+      },
+      "required": [
+        "id",
+        "firstName",
+        "lastName",
+        "dateOfBirth",
+        "email"
+      ]
+    },
+    "MedicalDocument": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "MedicalDocument",
+      "type": "object",
+      "description": "Represents a medical document uploaded by a patient.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the medical document."
+        },
+        "patientId": {
+          "type": "string",
+          "description": "Reference to Patient. (Relationship: Patient 1:N MedicalDocument)"
+        },
+        "documentType": {
+          "type": "string",
+          "description": "Type of medical document (e.g., Prescription, X-ray)."
+        },
+        "uploadDate": {
+          "type": "string",
+          "description": "Date when the document was uploaded.",
+          "format": "date-time"
+        },
+        "fileUrl": {
+          "type": "string",
+          "description": "URL of the uploaded document.",
+          "format": "uri"
+        }
+      },
+      "required": [
+        "id",
+        "patientId",
+        "documentType",
+        "uploadDate",
+        "fileUrl"
+      ]
+    },
+    "Appointment": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Appointment",
+      "type": "object",
+      "description": "Represents a doctor appointment scheduled by a patient.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the appointment."
+        },
+        "patientId": {
+          "type": "string",
+          "description": "Reference to Patient. (Relationship: Patient 1:N Appointment)"
+        },
+        "doctorId": {
+          "type": "string",
+          "description": "Reference to Doctor. (Relationship: Doctor 1:N Appointment)"
+        },
+        "appointmentDate": {
+          "type": "string",
+          "description": "Date and time of the appointment.",
+          "format": "date-time"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Additional notes for the appointment."
+        }
+      },
+      "required": [
+        "id",
+        "patientId",
+        "doctorId",
+        "appointmentDate"
+      ]
+    },
+    "Doctor": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Doctor",
+      "type": "object",
+      "description": "Represents a doctor in the local doctor directory.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the doctor."
+        },
+        "firstName": {
+          "type": "string",
+          "description": "Doctor's first name."
+        },
+        "lastName": {
+          "type": "string",
+          "description": "Doctor's last name."
+        },
+        "specialization": {
+          "type": "string",
+          "description": "Doctor's specialization."
+        },
+        "contactNumber": {
+          "type": "string",
+          "description": "Doctor's contact number."
+        }
+      },
+      "required": [
+        "id",
+        "firstName",
+        "lastName",
+        "specialization",
+        "contactNumber"
+      ]
+    }
+  },
+  "auth": {
+    "providers": [
+      "password"
+    ]
+  },
+  "firestore": {
+    "structure": [
+      {
+        "path": "/users/{userId}",
+        "definition": {
+          "entityName": "Patient",
+          "schema": {
+            "$ref": "#/backend/entities/Patient"
+          },
+          "description": "Represents a patient. Top-level collection for user data. All patient-specific data is stored under this path. This path is used for authentication purposes and can store profile information.",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The unique identifier for the user (patient)."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/users/{userId}/medicalDocuments/{medicalDocumentId}",
+        "definition": {
+          "entityName": "MedicalDocument",
+          "schema": {
+            "$ref": "#/backend/entities/MedicalDocument"
+          },
+          "description": "Represents a medical document uploaded by a patient. Includes denormalized 'patientId' for authorization independence.",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The unique identifier for the user (patient)."
+            },
+            {
+              "name": "medicalDocumentId",
+              "description": "The unique identifier for the medical document."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/users/{userId}/appointments/{appointmentId}",
+        "definition": {
+          "entityName": "Appointment",
+          "schema": {
+            "$ref": "#/backend/entities/Appointment"
+          },
+          "description": "Represents an appointment scheduled by a patient. Includes denormalized 'patientId' for authorization independence.",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The unique identifier for the user (patient)."
+            },
+            {
+              "name": "appointmentId",
+              "description": "The unique identifier for the appointment."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/doctors/{doctorId}",
+        "definition": {
+          "entityName": "Doctor",
+          "schema": {
+            "$ref": "#/backend/entities/Doctor"
+          },
+          "description": "Represents a doctor in the local directory.",
+          "params": [
+            {
+              "name": "doctorId",
+              "description": "The unique identifier for the doctor."
+            }
+          ]
+        }
+      }
+    ],
+    "reasoning": "The Firestore data structure is designed to provide a secure and scalable solution for MediVault, focusing on patient-centric data management. The structure adheres to the principles of Authorization Independence, Clarity of Intent, DBAC (Database-Based Access Control), QAPs (Queries are not Filters), and Invariants.\n\n**Authorization Independence:**\nAuthorization Independence is achieved primarily through path-based ownership for patient data and the potential future use of membership maps for collaborative scenarios. For example, medical documents and appointments are stored under the `/users/{userId}` path, ensuring that access control can be enforced based on the `request.auth.uid` without requiring `get()` calls to parent documents.\n\n**QAPs (Queries are not Filters):**\nThe segregation of data into user-specific subcollections (e.g., `/users/{userId}/medicalDocuments`) inherently supports secure list operations (QAPs). Security rules can allow listing only documents where `request.auth.uid == userId`, preventing unauthorized access to other users' data.\n\n**Structural Segregation (Homogeneous Security Posture):**\nEach collection is designed to hold documents with the same security requirements. This simplifies the security rules by avoiding the need for complex conditional logic within a single collection.\n\n**Access Modeling:**\n- Private Data: Path-based ownership is used for user-specific data. For example, a patient's medical documents are stored under `/users/{userId}/medicalDocuments/{medicalDocumentId}`.\n- Collaborative Data: The membership map pattern (`members: {uid1: \"role\", uid2: \"role\"}`) is not explicitly used in the current structure, but it could be incorporated for collaborative features (e.g., shared medical records with doctors) by adding a `members` field to relevant documents and denormalizing authorization information as needed.\n\n**Data Clarity and Predictability:**\nThe schema for each entity enforces strict naming conventions and data types, ensuring consistency and predictability. Explicit state modeling using a `status` field is not implemented in the current schemas, but could be added in the future for entities like Appointments."
+  }
+}
