@@ -1,0 +1,34 @@
+{
+  "placeholderImages": [
+    {
+      "id": "doctor1",
+      "description": "Portrait of a female doctor",
+      "imageUrl": "https://images.unsplash.com/photo-1651008376811-b90baee60c1f?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHwxMHx8d29tYW4lMjBkb2N0b3J8ZW58MHx8fHwxNzU4ODExNTk5fDA&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "woman doctor"
+    },
+    {
+      "id": "doctor2",
+      "description": "Portrait of a male doctor",
+      "imageUrl": "https://images.unsplash.com/photo-1548101307-a757d5f06d27?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw0fHxtYW4lMjBkb2N0b3J8ZW58MHx8fHwxNzU4NzE0NDY3fDA&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "man doctor"
+    },
+    {
+      "id": "doctor3",
+      "description": "Portrait of a male doctor with glasses",
+      "imageUrl": "https://images.unsplash.com/photo-1730597842283-943c7986ee2c?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw2fHxkb2N0b3IlMjBnbGFzc2VzfGVufDB8fHx8MTc1ODgxODg1MHww&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "doctor glasses"
+    },
+    {
+      "id": "doctor4",
+      "description": "Portrait of a smiling female doctor",
+      "imageUrl": "https://images.unsplash.com/photo-1580489944761-15a19d654956?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHwzfHxzbWlsaW5nJTIwd29tYW58ZW58MHx8fHwxNzU4NzcyOTE2fDA&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "smiling woman"
+    },
+    {
+      "id": "doctor5",
+      "description": "Portrait of a senior male doctor",
+      "imageUrl": "https://images.unsplash.com/photo-1758691461935-202e2ef6b69f?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHwzfHxzZW5pb3IlMjBkb2N0b3J8ZW58MHx8fHwxNzU4NzkzMzU1fDA&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "senior doctor"
+    }
+  ]
+}
