@@ -1,4 +1,3 @@
-
 'use client';
 import { Button } from '@/components/ui/button';
 import {
@@ -43,12 +42,6 @@ const features = [
     title: 'AI-Powered Smart Summaries',
     description:
       'Let our intelligent AI generate concise summaries of your medical history, making it easy to share with new providers.',
-  },
-  {
-    icon: <Stethoscope />,
-    title: 'Doctor Directory & Reviews',
-    description:
-      'Find and connect with local healthcare professionals. Read patient reviews to make informed decisions.',
   },
   {
     icon: <ShieldCheck />,
@@ -184,24 +177,7 @@ export default function LandingPage() {
       <footer className="flex flex-col gap-2 sm:flex-row py-6 w-full shrink-0 items-center px-4 md:px-6 border-t">
         <div className="flex items-center gap-2">
           <Logo />
-          <p className="text-xs text-muted-foreground">
-            &copy; 2024 All Medical. All rights reserved.
-          </p>
         </div>
-        <nav className="sm:ml-auto flex gap-4 sm:gap-6">
-          <Link
-            href="#"
-            className="text-xs hover:underline underline-offset-4"
-          >
-            Terms of Service
-          </Link>
-          <Link
-            href="#"
-            className="text-xs hover:underline underline-offset-4"
-          >
-            Privacy
-          </Link>
-        </nav>
       </footer>
     </div>
   );

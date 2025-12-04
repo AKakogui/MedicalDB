@@ -1,4 +1,3 @@
-
 'use client';
 import {
   Card,
@@ -22,6 +21,7 @@ import { Case } from '@/lib/types';
 import { collection, query } from 'firebase/firestore';
 import { formatDistanceToNow } from 'date-fns';
 import { FileText, MessageSquare, Loader } from 'lucide-react';
+import Link from 'next/link';
 
 export default function DoctorDashboard() {
   const firestore = useFirestore();
@@ -35,7 +35,7 @@ export default function DoctorDashboard() {
     switch (status) {
       case 'open':
         return 'secondary';
-      case 'in-review':
+      case 'answered':
         return 'default';
       case 'closed':
         return 'outline';
@@ -87,13 +87,11 @@ export default function DoctorDashboard() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="outline" size="sm" className="mr-2">
-                        <FileText />
-                        View Details
-                      </Button>
-                      <Button variant="outline" size="sm">
-                        <MessageSquare />
-                        Message Patient
+                      <Button asChild variant="outline" size="sm">
+                        <Link href={`/doctor-dashboard/${caseItem.id}`}>
+                          <FileText />
+                          View Details
+                        </Link>
                       </Button>
                     </TableCell>
                   </TableRow>

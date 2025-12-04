@@ -1,3 +1,4 @@
+
 'use client';
 import {
   Card,
@@ -5,13 +6,13 @@ import {
 } from '@/components/ui/card';
 import {
   CalendarDays,
-  Stethoscope,
   LayoutGrid,
   User,
   FolderOpenDot,
   Shield,
   BrainCircuit,
   Briefcase,
+  FolderKanban,
 } from 'lucide-react';
 import Link from 'next/link';
 import Header from '@/components/header';
@@ -27,19 +28,14 @@ const defaultMenuItems = [
     label: 'Dashboard',
   },
   {
-    href: '/medical-history',
-    icon: <FolderOpenDot className="size-10" />,
-    label: 'Medical History',
-  },
-  {
     href: '/appointments',
     icon: <CalendarDays className="size-10" />,
     label: 'Appointments',
   },
   {
-    href: '/doctors',
-    icon: <Stethoscope className="size-10" />,
-    label: 'Doctor Directory',
+    href: '/medical-history',
+    icon: <FolderOpenDot className="size-10" />,
+    label: 'Medical History',
   },
   {
     href: '/new-case',
@@ -47,14 +43,19 @@ const defaultMenuItems = [
     label: 'New Case',
   },
   {
-    href: '/smart-summary',
-    icon: <BrainCircuit className="size-10" />,
-    label: 'Smart Summary',
+    href: '/my-cases',
+    icon: <FolderKanban className="size-10" />,
+    label: 'My Cases',
   },
   {
     href: '/profile',
     icon: <User className="size-10" />,
     label: 'Profile',
+  },
+  {
+    href: '/smart-summary',
+    icon: <BrainCircuit className="size-10" />,
+    label: 'Smart Summary',
   },
 ];
 
@@ -89,15 +90,15 @@ export default function HomePage() {
     <AuthGate>
         <div className="flex min-h-screen w-full flex-col">
         <Header />
-        <main className="flex flex-1 flex-col gap-4 p-4 md:gap-8 md:p-8">
+        <main className="flex flex-1 items-center justify-center p-4 md:p-8">
             {role === 'doctor' ? (
               <DoctorDashboard />
             ) : (
-              <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-8 w-full max-w-4xl">
                   {menuItems.map((item) => (
-                  <Link href={item.href} key={item.label}>
-                      <Card className="h-full hover:bg-accent/80 transition-colors">
-                      <CardContent className="flex flex-col items-center justify-center p-6 space-y-2 text-center">
+                  <Link href={item.href} key={item.label} className="w-full">
+                      <Card className="h-full hover:bg-primary/90 transition-colors text-card-foreground hover:text-primary-foreground">
+                      <CardContent className="flex flex-col items-center justify-center p-6 space-y-2 text-center h-40">
                           {item.icon}
                           <span className="font-medium text-sm">{item.label}</span>
                       </CardContent>

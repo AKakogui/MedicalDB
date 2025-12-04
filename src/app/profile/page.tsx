@@ -1,4 +1,3 @@
-
 'use client';
 import MyCases from '@/components/sections/my-cases';
 import { useState, useEffect } from 'react';
@@ -30,7 +29,14 @@ import {
   useMemoFirebase,
   errorEmitter,
   FirestorePermissionError,
+  initializeFirebase,
 } from '@/firebase';
+import {
+  getStorage,
+  ref,
+  uploadBytesResumable,
+  getDownloadURL,
+} from 'firebase/storage';
 import {
   updateProfile,
   updatePassword,
@@ -41,7 +47,15 @@ import {
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Camera, CircleUser, Loader, ShieldAlert, BadgeCheck, MailWarning } from 'lucide-react';
+import {
+  Camera,
+  CircleUser,
+  Loader,
+  ShieldAlert,
+  BadgeCheck,
+  MailWarning,
+  Trash2,
+} from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import Header from '@/components/header';
 import {
@@ -57,7 +71,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useRouter } from 'next/navigation';
 import { Label } from '@/components/ui/label';
-
+import Link from 'next/link';
 
 const profileSchema = z
   .object({
@@ -65,7 +79,7 @@ const profileSchema = z
     lastName: z.string().min(1, 'Last name is required'),
     email: z.string().email(),
     address: z.string().optional(),
-    photoURL: z.string().optional(),
+    photoURL: z.string().nullable().optional(),
     currentPassword: z.string().optional(),
     newPassword: z.string().optional(),
     confirmNewPassword: z.string().optional(),
@@ -229,7 +243,6 @@ function DeleteAccountSection() {
   );
 }
 
-
 export default function ProfilePage() {
   const { user } = useUser();
   const auth = useAuth();
@@ -240,6 +253,9 @@ export default function ProfilePage() {
   const [isProfileLoading, setIsProfileLoading] = useState(true);
   const [isSendingVerification, setIsSendingVerification] = useState(false);
 
+  const { firebaseApp } = initializeFirebase();
+  const storage = getStorage(firebaseApp);
+
   const form = useForm<z.infer<typeof profileSchema>>({
     resolver: zodResolver(profileSchema),
     defaultValues: {
@@ -247,7 +263,7 @@ export default function ProfilePage() {
       lastName: '',
       email: '',
       address: '',
-      photoURL: '',
+      photoURL: null,
       currentPassword: '',
       newPassword: '',
       confirmNewPassword: '',
@@ -272,19 +288,24 @@ export default function ProfilePage() {
               lastName: data.lastName || '',
               email: user.email || '',
               address: data.address || '',
-              photoURL: user.photoURL || '',
+              photoURL: user.photoURL || null,
             });
           } else {
             form.reset({
               firstName: user.displayName?.split(' ')[0] || '',
               lastName: user.displayName?.split(' ').slice(1).join(' ') || '',
               email: user.email || '',
-              photoURL: user.photoURL || '',
+              address: '',
+              photoURL: user.photoURL || null,
             });
           }
         } catch (error) {
-          console.error("Error fetching user profile:", error);
-          toast({ variant: 'destructive', title: 'Error', description: 'Could not load your profile.' });
+          console.error('Error fetching user profile:', error);
+          toast({
+            variant: 'destructive',
+            title: 'Error',
+            description: 'Could not load your profile.',
+          });
         } finally {
           setIsProfileLoading(false);
         }
@@ -293,13 +314,13 @@ export default function ProfilePage() {
     }
   }, [user, userDocRef, form, toast]);
 
-
-  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
     const file = event.target.files?.[0];
     if (!file || !user) return;
-  
-    // ✅ Step 1: File size limit (2 MB)
-    const maxSize = 2 * 1024 * 1024; // 2 MB in bytes
+
+    const maxSize = 2 * 1024 * 1024; // 2 MB
     if (file.size > maxSize) {
       toast({
         variant: 'destructive',
@@ -308,8 +329,7 @@ export default function ProfilePage() {
       });
       return;
     }
-  
-    // ✅ Step 2: Optional type check (optional but good hygiene)
+
     const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg'];
     if (!allowedTypes.includes(file.type)) {
       toast({
@@ -319,30 +339,60 @@ export default function ProfilePage() {
       });
       return;
     }
-  
-    // ✅ Step 3: Proceed with upload (same as before)
+
     setIsUploading(true);
+
+    const filePath = `profile-pictures/${user.uid}/${file.name}`;
+    const storageRef = ref(storage, filePath);
+    const uploadTask = uploadBytesResumable(storageRef, file);
+
+    uploadTask.on(
+      'state_changed',
+      null, // No need for progress updates here
+      (error) => {
+        console.error('Upload failed:', error);
+        toast({
+          variant: 'destructive',
+          title: 'Upload Failed',
+          description: error.message,
+        });
+        setIsUploading(false);
+      },
+      async () => {
+        try {
+          const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+          await updateProfile(user, { photoURL: downloadURL });
+          form.setValue('photoURL', downloadURL);
+          toast({ title: 'Success', description: 'Profile picture updated!' });
+        } catch (error: any) {
+          console.error('Failed to update profile:', error);
+          toast({
+            variant: 'destructive',
+            title: 'Update Failed',
+            description: error.message,
+          });
+        } finally {
+          setIsUploading(false);
+        }
+      }
+    );
+  };
+
+  const handleRemovePicture = async () => {
+    if (!user) return;
+
     try {
-      // Simulate upload delay (replace with real Firebase Storage upload later if needed)
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      const newPhotoURL = URL.createObjectURL(file);
-  
-      // Update Firebase Auth profile
-      await updateProfile(user, { photoURL: newPhotoURL });
-
-
-      // Update form state
-      form.setValue('photoURL', newPhotoURL);
-  
-      toast({ title: 'Success', description: 'Profile picture updated!' });
+      await updateProfile(user, { photoURL: '' });
+      form.setValue('photoURL', null);
+      toast({ title: 'Success', description: 'Profile picture removed.' });
     } catch (error: any) {
-      toast({ variant: 'destructive', title: 'Upload Failed', description: error.message });
-      toast({ variant: 'destructive', title: 'Upload Failed', description: error.message });
-    } finally {
-      setIsUploading(false);
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Could not remove profile picture.',
+      });
     }
   };
-  
 
   const handleResendVerification = async () => {
     if (!auth.currentUser) return;
@@ -352,7 +402,8 @@ export default function ProfilePage() {
       .then(() => {
         toast({
           title: 'Verification email sent',
-          description: "Please check your inbox (and spam folder) to verify your email address.",
+          description:
+            'Please check your inbox (and spam folder) to verify your email address.',
         });
       })
       .catch((error) => {
@@ -382,7 +433,10 @@ export default function ProfilePage() {
         // Re-authenticate before updating password
         await reauthenticateWithCredential(auth.currentUser, credential);
         await updatePassword(auth.currentUser, values.newPassword);
-        toast({ title: 'Success', description: 'Password updated successfully.' });
+        toast({
+          title: 'Success',
+          description: 'Password updated successfully.',
+        });
       }
 
       // Update Firestore document
@@ -394,19 +448,24 @@ export default function ProfilePage() {
         { merge: true }
       );
 
-      toast({ title: 'Success', description: 'Profile updated successfully.' });
+      toast({
+        title: 'Success',
+        description: 'Profile updated successfully.',
+      });
       form.reset({
         ...form.getValues(),
         currentPassword: '',
         newPassword: '',
         confirmNewPassword: '',
       });
-
     } catch (error: any) {
       toast({
         variant: 'destructive',
         title: 'Update Failed',
-        description: error.code === 'auth/wrong-password' ? 'The current password you entered is incorrect.' : error.message,
+        description:
+          error.code === 'auth/wrong-password'
+            ? 'The current password you entered is incorrect.'
+            : error.message,
       });
     } finally {
       setIsLoading(false);
@@ -450,24 +509,68 @@ export default function ProfilePage() {
                             <FormLabel>Profile Picture</FormLabel>
                             <div className="flex items-center gap-4">
                               <Avatar className="h-24 w-24">
-                                <AvatarImage src={photoURL} alt="User avatar" />
+                                <AvatarImage
+                                  src={photoURL || undefined}
+                                  alt="User avatar"
+                                />
                                 <AvatarFallback>
                                   <CircleUser className="h-12 w-12" />
                                 </AvatarFallback>
                               </Avatar>
-                              <Button asChild variant="outline">
-                                <label htmlFor="photo-upload" className="cursor-pointer">
-                                  {isUploading ? (
-                                    <>
-                                      <Loader className="animate-spin" /> Uploading...
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Camera /> Change Picture
-                                    </>
-                                  )}
-                                </label>
-                              </Button>
+                              <div className="flex flex-col gap-2">
+                                <Button asChild variant="outline">
+                                  <label
+                                    htmlFor="photo-upload"
+                                    className="cursor-pointer"
+                                  >
+                                    {isUploading ? (
+                                      <>
+                                        <Loader className="animate-spin" />{' '}
+                                        Uploading...
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Camera /> Change Picture
+                                      </>
+                                    )}
+                                  </label>
+                                </Button>
+                                {photoURL && (
+                                  <AlertDialog>
+                                    <AlertDialogTrigger asChild>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="text-destructive hover:text-destructive"
+                                      >
+                                        <Trash2 /> Remove Picture
+                                      </Button>
+                                    </AlertDialogTrigger>
+                                    <AlertDialogContent>
+                                      <AlertDialogHeader>
+                                        <AlertDialogTitle>
+                                          Are you sure?
+                                        </AlertDialogTitle>
+                                        <AlertDialogDescription>
+                                          This will remove your profile picture.
+                                          This action cannot be undone.
+                                        </AlertDialogDescription>
+                                      </AlertDialogHeader>
+                                      <AlertDialogFooter>
+                                        <AlertDialogCancel>
+                                          Cancel
+                                        </AlertDialogCancel>
+                                        <AlertDialogAction
+                                          onClick={handleRemovePicture}
+                                          className="bg-destructive hover:bg-destructive/90"
+                                        >
+                                          Remove
+                                        </AlertDialogAction>
+                                      </AlertDialogFooter>
+                                    </AlertDialogContent>
+                                  </AlertDialog>
+                                )}
+                              </div>
                               <FormControl>
                                 <Input
                                   id="photo-upload"
@@ -561,7 +664,6 @@ export default function ProfilePage() {
                         </div>
                       )}
 
-
                       <FormField
                         control={form.control}
                         name="address"
@@ -569,7 +671,10 @@ export default function ProfilePage() {
                           <FormItem>
                             <FormLabel>Address</FormLabel>
                             <FormControl>
-                              <Input placeholder="123 Main St, Anytown USA" {...field} />
+                              <Input
+                                placeholder="123 Main St, Anytown USA"
+                                {...field}
+                              />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -577,7 +682,9 @@ export default function ProfilePage() {
                       />
 
                       <div>
-                        <h3 className="mb-4 text-lg font-medium">Change Password</h3>
+                        <h3 className="mb-4 text-lg font-medium">
+                          Change Password
+                        </h3>
                         <div className="space-y-4 rounded-md border p-4">
                           <FormField
                             control={form.control}
@@ -586,7 +693,11 @@ export default function ProfilePage() {
                               <FormItem>
                                 <FormLabel>Current Password</FormLabel>
                                 <FormControl>
-                                  <Input type="password" placeholder="••••••••" {...field} />
+                                  <Input
+                                    type="password"
+                                    placeholder="••••••••"
+                                    {...field}
+                                  />
                                 </FormControl>
                                 <FormMessage />
                               </FormItem>
@@ -599,7 +710,11 @@ export default function ProfilePage() {
                               <FormItem>
                                 <FormLabel>New Password</FormLabel>
                                 <FormControl>
-                                  <Input type="password" placeholder="••••••••" {...field} />
+                                  <Input
+                                    type="password"
+                                    placeholder="••••••••"
+                                    {...field}
+                                  />
                                 </FormControl>
                                 <FormMessage />
                               </FormItem>
@@ -612,7 +727,11 @@ export default function ProfilePage() {
                               <FormItem>
                                 <FormLabel>Confirm New Password</FormLabel>
                                 <FormControl>
-                                  <Input type="password" placeholder="••••••••" {...field} />
+                                  <Input
+                                    type="password"
+                                    placeholder="••••••••"
+                                    {...field}
+                                  />
                                 </FormControl>
                                 <FormMessage />
                               </FormItem>
@@ -624,8 +743,15 @@ export default function ProfilePage() {
                   )}
                 </CardContent>
                 <CardFooter>
-                  <Button type="submit" disabled={isLoading || isProfileLoading}>
-                    {isLoading ? <Loader className="animate-spin" /> : 'Save Changes'}
+                  <Button
+                    type="submit"
+                    disabled={isLoading || isProfileLoading}
+                  >
+                    {isLoading ? (
+                      <Loader className="animate-spin" />
+                    ) : (
+                      'Save Changes'
+                    )}
                   </Button>
                 </CardFooter>
               </form>
@@ -635,13 +761,18 @@ export default function ProfilePage() {
           <Card>
             <CardHeader>
               <CardTitle>My Cases</CardTitle>
-              <CardDescription>View your submitted medical cases and their status.</CardDescription>
+              <CardDescription>
+                View your submitted medical cases and their status.
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              <MyCases />
+              <div className="text-right">
+                <Button asChild>
+                  <Link href="/my-cases">View All Cases</Link>
+                </Button>
+              </div>
             </CardContent>
           </Card>
-
 
           <DeleteAccountSection />
         </div>
