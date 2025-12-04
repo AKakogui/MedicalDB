@@ -1,154 +1,199 @@
-
 'use client';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardFooter,
-} from '@/components/ui/card';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Button } from '@/components/ui/button';
-import { useState } from 'react';
-import { Loader } from 'lucide-react';
-import {
-  useFirestore,
-  useUser,
-  errorEmitter,
-  FirestorePermissionError,
-} from '@/firebase';
-import { collection, doc, setDoc, serverTimestamp } from 'firebase/firestore';
+
+import { useState, useEffect } from 'react';
+import { useUser, useFirestore, useCollection, useMemoFirebase } from '@/firebase';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { useRouter } from 'next/navigation';
 
-const newCaseSchema = z.object({
-  subject: z.string().min(5, 'Subject must be at least 5 characters.'),
-  description: z
-    .string()
-    .min(20, 'Description must be at least 20 characters.'),
-});
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Card,
+  CardHeader,
+  CardContent,
+  CardTitle,
+  CardDescription
+} from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
+import { Select, SelectItem, SelectContent, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Progress } from '@/components/ui/progress';
+import { useToast } from '@/hooks/use-toast';
+import { Loader } from 'lucide-react';
+import { Case } from '@/lib/types';
+
 
 export default function NewCaseForm() {
-  const [isLoading, setIsLoading] = useState(false);
   const { user } = useUser();
   const firestore = useFirestore();
+  const storage = getStorage();
   const router = useRouter();
+  const { toast } = useToast();
 
-  const form = useForm<z.infer<typeof newCaseSchema>>({
-    resolver: zodResolver(newCaseSchema),
-    defaultValues: {
-      subject: '',
-      description: '',
-    },
-  });
+  const [subject, setSubject] = useState("");
+  const [description, setDescription] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [selectedImaging, setSelectedImaging] = useState<string>("none");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  async function onSubmit(values: z.infer<typeof newCaseSchema>) {
-    if (!user || !firestore) {
-      // This should ideally not happen if the user is on this page,
-      // but it's a good safeguard.
-      alert('You must be logged in to create a case.');
-      return;
-    }
+  // Load previous imaging records for linking
+  const imagingQuery = useMemoFirebase(
+    () => (user ? collection(firestore, "users", user.uid, "imagingRecords") : null),
+    [firestore, user]
+  );
+  const { data: imagingRecords } = useCollection(imagingQuery);
 
-    setIsLoading(true);
-    const casesCollection = collection(firestore, 'cases');
-    const newCaseRef = doc(casesCollection); 
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!user || !firestore) return;
 
-    const caseData = {
-      id: newCaseRef.id,
-      ...values,
-      patientId: user.uid,
-      status: 'open',
-      createdAt: serverTimestamp(),
-    };
+    setIsSubmitting(true);
+    setUploadProgress(0);
+    let imagingFileUrl: string | undefined;
+    let imagingFileName: string | undefined;
 
-    setDoc(newCaseRef, caseData)
-      .then(() => {
-        router.push('/new-case/success');
-      })
-      .catch((error) => {
-        const permissionError = new FirestorePermissionError({
-          path: newCaseRef.path,
-          operation: 'create',
-          requestResourceData: caseData,
+    try {
+      // If user attached a new file
+      if (file) {
+        const filePath = `users/${user.uid}/cases/${Date.now()}/${file.name}`;
+        const storageRef = ref(storage, filePath);
+
+        const uploadTask = uploadBytesResumable(storageRef, file);
+
+        await new Promise<void>((resolve, reject) => {
+          uploadTask.on(
+            "state_changed",
+            (snapshot) => {
+              const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+              setUploadProgress(progress);
+            },
+            (error) => reject(error),
+            async () => {
+              imagingFileUrl = await getDownloadURL(uploadTask.snapshot.ref);
+              imagingFileName = file.name;
+              resolve();
+            }
+          );
         });
-        errorEmitter.emit('permission-error', permissionError);
+      }
 
-      })
-      .finally(() => {
-        setIsLoading(false);
+      // Prepare Firestore doc data
+      const data: Partial<Case> = {
+        subject,
+        description,
+        createdAt: serverTimestamp() as any,
+        status: "open",
+        patientId: user.uid,
+        imagingFileUrl: imagingFileUrl,
+        imagingFileName: imagingFileName,
+      };
+
+      // If linking an existing imaging record
+      if (selectedImaging !== "none") {
+        const linkedRecord = imagingRecords?.find((r) => r.id === selectedImaging);
+        if (linkedRecord) {
+          data.imagingFileUrl = linkedRecord.fileUrl;
+          data.imagingFileName = linkedRecord.fileName;
+        }
+      }
+
+      const docRef = await addDoc(collection(firestore, "cases"), data);
+
+      toast({
+        title: "Case Submitted",
+        description: "Your second opinion request has been sent."
       });
+      router.push(`/cases/${docRef.id}`);
+
+    } catch (err) {
+      console.error(err);
+      toast({
+        variant: 'destructive',
+        title: 'Submission Failed',
+        description: 'Could not submit your case. Please try again.'
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
-    <Card className="w-full max-w-2xl mx-auto">
-      <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)}>
-          <CardHeader>
-            <CardTitle>Open a New Case for Second Opinion</CardTitle>
-            <CardDescription>
-              Fill out the details below to submit your case. A medical
-              professional will review it shortly.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <FormField
-              control={form.control}
-              name="subject"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Subject</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="e.g., Second opinion on recent MRI results"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
+    <Card className="max-w-2xl w-full">
+      <CardHeader>
+        <CardTitle>Open a New Case for Second Opinion</CardTitle>
+        <CardDescription>
+          Fill out the details below to submit your case. A medical professional will review it shortly.
+        </CardDescription>
+      </CardHeader>
+
+      <CardContent>
+        <form onSubmit={handleSubmit} className="space-y-4">
+
+          <div className="space-y-2">
+            <Label>Subject</Label>
+            <Input
+              placeholder="e.g. Chest X-RAY follow up"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              required
             />
-            <FormField
-              control={form.control}
-              name="description"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Description</FormLabel>
-                  <FormControl>
-                    <Textarea
-                      placeholder="Please provide a detailed description of your condition, the documents you're sharing, and the specific questions you have."
-                      className="min-h-[150px]"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
+          </div>
+
+          <div className="space-y-2">
+            <Label>Description</Label>
+            <Textarea
+              placeholder="Describe your concern..."
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={5}
             />
-          </CardContent>
-          <CardFooter>
-            <Button type="submit" disabled={isLoading}>
-              {isLoading ? (
-                <Loader className="animate-spin" />
-              ) : (
-                'Open Second Opinion Case'
-              )}
-            </Button>
-          </CardFooter>
+          </div>
+
+          {/* Choose existing imaging */}
+          <div className="space-y-2">
+            <Label>Link an Existing Imaging Record (optional)</Label>
+            <Select onValueChange={setSelectedImaging} value={selectedImaging}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select a record" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None</SelectItem>
+                {imagingRecords?.map((item) => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {item.type} – {item.bodyPart}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Upload new file */}
+          <div className="space-y-2">
+            <Label>Or Upload Image (optional)</Label>
+            <Input
+              type="file"
+              accept=".jpg,.jpeg,.png,.pdf,.dcm"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+            />
+          </div>
+
+          {uploadProgress !== null && isSubmitting && (
+            <div className="space-y-2">
+              <Label>Uploading...</Label>
+              <Progress value={uploadProgress} />
+              <p className="text-center text-muted-foreground">
+                {Math.round(uploadProgress)}%
+              </p>
+            </div>
+          )}
+
+          <Button type="submit" className="w-full" disabled={isSubmitting}>
+             {isSubmitting ? <Loader className="animate-spin" /> : 'Submit Case'}
+          </Button>
         </form>
-      </Form>
+      </CardContent>
     </Card>
   );
 }
