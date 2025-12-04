@@ -696,7 +696,8 @@ export default function ProfilePage() {
                                   <Input
                                     type="password"
                                     placeholder="••••••••"
-                                    {...field}
+                                    value={field.value?? ""}
+                                    onChange={field.onChange}
                                   />
                                 </FormControl>
                                 <FormMessage />
