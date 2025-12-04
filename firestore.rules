@@ -9,11 +9,14 @@
  * - /users/{userId}/medicalDocuments/{medicalDocumentId}: Stores medical documents associated with a patient.
  * - /users/{userId}/appointments/{appointmentId}: Stores appointment information for a patient.
  * - /doctors/{doctorId}: Stores publicly accessible doctor information.
+ * - /cases/{caseId}: Stores patient-submitted cases for second opinions.
  *
  * Key Security Decisions:
  * - Users can only create, read, update, and delete their own data under the /users/{userId} path.
  * - Listing all users is disallowed.
  * - Doctor information is publicly readable but only writable by an admin (currently not implemented, so writes are denied).
+ * - Patients can create cases and manage their own cases.
+ * - Doctors and admins can read all cases and update them (e.g., to provide a response).
  *
  * Denormalization for Authorization:
  * - The 'patientId' field is denormalized in MedicalDocument and Appointment entities to allow for independent authorization checks without requiring additional `get()` calls. This optimization ensures that security rules can efficiently verify ownership.
@@ -108,6 +111,32 @@ service cloud.firestore {
       allow create: if false;
       allow update: if false;
       allow delete: if false;
+    }
+
+    /**
+     * @description Controls access to patient-submitted cases.
+     * @path /cases/{caseId}
+     * @allow (read) Authenticated patients can read their own cases. Doctors and admins can read all cases.
+     * @allow (list) Authenticated patients can list their own cases. Doctors and admins can list all cases.
+     * @allow (create) Authenticated user can create a case if the patientId matches their UID.
+     * @allow (update) Doctors and admins can update any case. Patients can only update their own case if it's 'open'.
+     * @allow (delete) Patients can delete their own cases.
+     * @principle Enforces patient ownership and grants broader access to privileged roles.
+     */
+    match /cases/{caseId} {
+      function isPatientOwner(doc) {
+        return request.auth != null && request.auth.uid == doc.patientId;
+      }
+      
+      function isDoctorOrAdmin() {
+        return request.auth != null && (request.auth.token.role == 'doctor' || request.auth.token.role == 'admin');
+      }
+
+      allow read: if isPatientOwner(resource.data) || isDoctorOrAdmin();
+      allow list: if isDoctorOrAdmin() || (request.auth != null && request.query.where[0][2] == request.auth.uid);
+      allow create: if request.auth != null && request.resource.data.patientId == request.auth.uid;
+      allow update: if isDoctorOrAdmin() || (isPatientOwner(resource.data) && resource.data.status == 'open');
+      allow delete: if isPatientOwner(resource.data);
     }
   }
 }

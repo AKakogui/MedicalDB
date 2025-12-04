@@ -15,11 +15,11 @@ import {
 } from '@/components/ui/table';
 import type {
   ImagingRecord,
-  MedicalDocument,
   Prescription,
   LabResult,
   DoctorVisit,
 } from '@/lib/types';
+
 import {
   Beaker,
   Bone,
@@ -30,7 +30,11 @@ import {
   Waves,
   Loader,
   BrainCircuit,
+  Download,
+  Trash2,
+  ShieldAlert,
 } from 'lucide-react';
+
 import { Button } from '../ui/button';
 import {
   Card,
@@ -39,6 +43,18 @@ import {
   CardHeader,
   CardTitle,
 } from '../ui/card';
+
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+
 import { Badge } from '../ui/badge';
 import React, { useState } from 'react';
 import { Input } from '../ui/input';
@@ -50,6 +66,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+
 import {
   Form,
   FormControl,
@@ -58,19 +75,37 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
+
 import { useForm, type UseFormReturn } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '../ui/textarea';
+
 import {
   useCollection,
   useFirestore,
   useMemoFirebase,
   useUser,
+  initializeFirebase,
 } from '@/firebase';
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+
+import {
+  addDoc,
+  collection,
+  serverTimestamp,
+  deleteDoc,
+  doc,
+} from 'firebase/firestore';
+
+import {
+  getStorage,
+  ref,
+  uploadBytesResumable,
+  getDownloadURL,
+  deleteObject,
+} from 'firebase/storage';
+
 import { format } from 'date-fns';
 import {
   Select,
@@ -79,9 +114,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../ui/select';
+
 import { ToastAction } from '../ui/toast';
 import { Progress } from '../ui/progress';
 import { Label } from '../ui/label';
+
+/* ------------------ VALIDATION SCHEMAS ------------------ */
 
 const fileSchema = z
   .any()
@@ -108,28 +146,15 @@ const labResultSchema = z.object({
   testName: z.string().min(1, 'Test name is required.'),
   value: z.string().min(1, 'Value is required.'),
   referenceRange: z.string().min(1, 'Reference range is required.'),
-  file: fileSchema,
+  file: optionalFileSchema,
 });
 
 const specialties = [
-  'Cardiology',
-  'Dermatology',
-  'Endocrinology',
-  'Gastroenterology',
-  'Hematology',
-  'Infectious Disease',
-  'Neurology',
-  'Oncology',
-  'Ophthalmology',
-  'Orthopedics',
-  'Otolaryngology (ENT)',
-  'Pediatrics',
-  'Psychiatry',
-  'Pulmonology',
-  'Radiology',
-  'Rheumatology',
-  'Urology',
-  'Other',
+  'Cardiology', 'Dermatology', 'Endocrinology', 'Gastroenterology',
+  'Hematology', 'Infectious Disease', 'Neurology', 'Oncology',
+  'Ophthalmology', 'Orthopedics', 'Otolaryngology (ENT)',
+  'Pediatrics', 'Psychiatry', 'Pulmonology', 'Radiology',
+  'Rheumatology', 'Urology', 'Other'
 ];
 
 const visitSummarySchema = z.object({
@@ -147,6 +172,8 @@ const iconMap: Record<string, React.ReactNode> = {
 };
 
 type UploadSection = 'prescription' | 'imaging' | 'lab' | 'visit';
+
+/* ------------------ GENERIC UPLOAD FORM ------------------ */
 
 interface UploadFormProps<T extends z.ZodType<any, any>> {
   form: UseFormReturn<z.infer<T>>;
@@ -181,16 +208,16 @@ function GenericUploadForm<T extends z.ZodType<any, any>>({
                   type="file"
                   accept=".pdf,.jpg,.jpeg,.png,.dcm"
                   disabled={isLoading}
-                  onChange={(e) => {
-                    field.onChange(e.target.files);
-                  }}
+                  onChange={(e) => field.onChange(e.target.files)}
                 />
               </FormControl>
               <FormMessage />
             </FormItem>
           )}
         />
+
         {children}
+
         {isLoading && uploadProgress !== null && (
           <div className="space-y-2">
             <Label>Uploading...</Label>
@@ -200,6 +227,7 @@ function GenericUploadForm<T extends z.ZodType<any, any>>({
             </p>
           </div>
         )}
+
         <DialogFooter>
           <Button
             type="button"
@@ -218,6 +246,8 @@ function GenericUploadForm<T extends z.ZodType<any, any>>({
   );
 }
 
+/* ------------------ UPLOAD DIALOG (PATCHED) ------------------ */
+
 function UploadDialog({
   section,
   onClose,
@@ -230,6 +260,10 @@ function UploadDialog({
   const firestore = useFirestore();
   const [isLoading, setIsLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+
+  /** ⭐ ALWAYS ensure Firebase App is initialized */
+  const { firebaseApp } = initializeFirebase();
+  const storage = getStorage(firebaseApp);
 
   const formDetails = React.useMemo(() => {
     switch (section) {
@@ -302,21 +336,39 @@ function UploadDialog({
 
   const { title, collectionName, schema } = formDetails;
 
+  /* -------------- PATCHED UPLOAD LOGIC --------------- */
+
   async function onSubmit(values: z.infer<typeof schema>) {
     if (!user || !firestore) return;
+
+    const file = values.file?.[0];
+    let fileUrl: string | null = null;
+    let fileName: string | null = null;
+
+    // Add file size check
+    if (file) {
+      const maxSize = 10 * 1024 * 1024; // 10 MB in bytes
+      if (file.size > maxSize) {
+        toast({
+          variant: 'destructive',
+          title: 'File too large',
+          description: 'Please upload a file smaller than 10 MB.',
+        });
+        return;
+      }
+    }
+    
     setIsLoading(true);
     setUploadProgress(null);
 
-    const file = values.file?.[0];
-    let fileUrl: string | undefined = undefined;
-    let fileName: string | undefined = undefined;
 
     try {
       if (file) {
         setUploadProgress(0);
-        const storage = getStorage();
+
         const filePath = `users/${user.uid}/${collectionName}/${Date.now()}-${file.name}`;
         const storageRef = ref(storage, filePath);
+
         const uploadTask = uploadBytesResumable(storageRef, file);
 
         await new Promise<void>((resolve, reject) => {
@@ -347,6 +399,7 @@ function UploadDialog({
         patientId: user.uid,
         uploadDate: serverTimestamp(),
       };
+
       delete docData.file;
 
       const docRef = collection(firestore, 'users', user.uid, collectionName);
@@ -363,9 +416,11 @@ function UploadDialog({
           </ToastAction>
         ) : undefined,
       });
+
       onClose();
     } catch (error) {
       console.error('Upload failed:', error);
+
       toast({
         variant: 'destructive',
         title: 'Upload Failed',
@@ -376,6 +431,8 @@ function UploadDialog({
       setUploadProgress(null);
     }
   }
+
+  /* ------------ CONTENT RENDERING SWITCH ------------ */
 
   const renderFormContent = () => {
     switch (section) {
@@ -402,6 +459,7 @@ function UploadDialog({
                 </FormItem>
               )}
             />
+
             <FormField
               control={form.control}
               name="dosage"
@@ -415,6 +473,7 @@ function UploadDialog({
                 </FormItem>
               )}
             />
+
             <FormField
               control={form.control}
               name="frequency"
@@ -428,6 +487,7 @@ function UploadDialog({
                 </FormItem>
               )}
             />
+
             <FormField
               control={form.control}
               name="prescribedBy"
@@ -442,6 +502,7 @@ function UploadDialog({
             />
           </GenericUploadForm>
         );
+
       case 'imaging':
         return (
           <GenericUploadForm
@@ -464,6 +525,7 @@ function UploadDialog({
                 </FormItem>
               )}
             />
+
             <FormField
               control={form.control}
               name="bodyPart"
@@ -477,6 +539,7 @@ function UploadDialog({
                 </FormItem>
               )}
             />
+
             <FormField
               control={form.control}
               name="result"
@@ -491,6 +554,7 @@ function UploadDialog({
             />
           </GenericUploadForm>
         );
+
       case 'lab':
         return (
           <GenericUploadForm
@@ -498,6 +562,7 @@ function UploadDialog({
             isLoading={isLoading}
             onClose={onClose}
             onSubmit={onSubmit}
+            isFileOptional
             uploadProgress={uploadProgress}
           >
             <FormField
@@ -513,6 +578,7 @@ function UploadDialog({
                 </FormItem>
               )}
             />
+
             <FormField
               control={form.control}
               name="value"
@@ -526,6 +592,7 @@ function UploadDialog({
                 </FormItem>
               )}
             />
+
             <FormField
               control={form.control}
               name="referenceRange"
@@ -541,6 +608,7 @@ function UploadDialog({
             />
           </GenericUploadForm>
         );
+
       case 'visit':
         return (
           <GenericUploadForm
@@ -564,6 +632,7 @@ function UploadDialog({
                 </FormItem>
               )}
             />
+
             <FormField
               control={form.control}
               name="specialty"
@@ -588,6 +657,7 @@ function UploadDialog({
                 </FormItem>
               )}
             />
+
             <FormField
               control={form.control}
               name="reason"
@@ -602,6 +672,7 @@ function UploadDialog({
             />
           </GenericUploadForm>
         );
+
       default:
         return null;
     }
@@ -611,9 +682,7 @@ function UploadDialog({
     <Dialog
       open={!!section}
       onOpenChange={(isOpen) => {
-        if (!isOpen) {
-          onClose();
-        }
+        if (!isOpen && !isLoading) onClose();
       }}
     >
       <DialogContent>
@@ -623,11 +692,14 @@ function UploadDialog({
             Fill in the details for your uploaded document.
           </DialogDescription>
         </DialogHeader>
+
         {renderFormContent()}
       </DialogContent>
     </Dialog>
   );
 }
+
+/* ------------------ LOADING STATES ------------------ */
 
 function SectionLoader() {
   return (
@@ -645,16 +717,31 @@ function EmptyState() {
   );
 }
 
+type DeletionInfo = {
+  id: string;
+  collectionName: string;
+  fileUrl?: string | null;
+};
+
+/* ------------------ MAIN COMPONENT ------------------ */
+
 export default function MedicalHistory() {
   const [activeUpload, setActiveUpload] = useState<UploadSection | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState<DeletionInfo | null>(null);
   const { user } = useUser();
   const firestore = useFirestore();
+  const { toast } = useToast();
+  
+  const { firebaseApp } = initializeFirebase();
+  const storage = getStorage(firebaseApp);
 
   const prescriptionsQuery = useMemoFirebase(
     () =>
       user ? collection(firestore, 'users', user.uid, 'prescriptions') : null,
     [user, firestore]
   );
+
   const { data: prescriptions, isLoading: loadingPrescriptions } =
     useCollection<Prescription>(prescriptionsQuery);
 
@@ -663,6 +750,7 @@ export default function MedicalHistory() {
       user ? collection(firestore, 'users', user.uid, 'imagingRecords') : null,
     [user, firestore]
   );
+
   const { data: imagingRecords, isLoading: loadingImaging } =
     useCollection<ImagingRecord>(imagingQuery);
 
@@ -670,6 +758,7 @@ export default function MedicalHistory() {
     () => (user ? collection(firestore, 'users', user.uid, 'labResults') : null),
     [user, firestore]
   );
+
   const { data: labResults, isLoading: loadingLabs } =
     useCollection<LabResult>(labsQuery);
 
@@ -678,6 +767,7 @@ export default function MedicalHistory() {
       user ? collection(firestore, 'users', user.uid, 'doctorVisits') : null,
     [user, firestore]
   );
+
   const { data: doctorVisits, isLoading: loadingVisits } =
     useCollection<DoctorVisit>(visitsQuery);
 
@@ -686,12 +776,72 @@ export default function MedicalHistory() {
     return format(timestamp.toDate(), 'yyyy-MM-dd');
   };
 
+  const handleDelete = async () => {
+    if (!itemToDelete || !user) return;
+    setIsDeleting(true);
+
+    try {
+      // 1. Delete Firestore document
+      const docRef = doc(firestore, 'users', user.uid, itemToDelete.collectionName, itemToDelete.id);
+      await deleteDoc(docRef);
+
+      // 2. Delete file from Storage if it exists
+      if (itemToDelete.fileUrl) {
+        const fileRef = ref(storage, itemToDelete.fileUrl);
+        await deleteObject(fileRef);
+      }
+
+      toast({
+        title: "Record Deleted",
+        description: "The medical record has been successfully removed."
+      });
+
+    } catch (error) {
+      console.error("Error deleting record: ", error);
+      toast({
+        variant: "destructive",
+        title: "Deletion Failed",
+        description: "Could not delete the record. Please try again."
+      });
+    } finally {
+      setIsDeleting(false);
+      setItemToDelete(null);
+    }
+  };
+  
+
   return (
     <>
       <UploadDialog
         section={activeUpload}
         onClose={() => setActiveUpload(null)}
       />
+
+      <AlertDialog open={!!itemToDelete} onOpenChange={(open) => !open && setItemToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="text-destructive" />
+              Are you sure?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete the medical record and any associated file.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive hover:bg-destructive/90"
+              onClick={handleDelete}
+              disabled={isDeleting}
+            >
+              {isDeleting ? <Loader className="animate-spin" /> : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+
       <Card>
         <CardHeader>
           <CardTitle>Medical History</CardTitle>
@@ -699,8 +849,11 @@ export default function MedicalHistory() {
             A comprehensive overview of your medical records.
           </CardDescription>
         </CardHeader>
+
         <CardContent>
           <Accordion type="single" collapsible defaultValue="prescriptions">
+
+            {/* ------------ PRESCRIPTIONS ------------ */}
             <AccordionItem value="prescriptions">
               <AccordionTrigger className="text-lg font-semibold">
                 <div className="flex items-center gap-3">
@@ -708,6 +861,7 @@ export default function MedicalHistory() {
                   Prescriptions
                 </div>
               </AccordionTrigger>
+
               <AccordionContent>
                 <div className="flex justify-end mb-4">
                   <Button onClick={() => setActiveUpload('prescription')}>
@@ -715,6 +869,7 @@ export default function MedicalHistory() {
                     Upload Prescription
                   </Button>
                 </div>
+
                 {loadingPrescriptions ? (
                   <SectionLoader />
                 ) : prescriptions && prescriptions.length > 0 ? (
@@ -725,20 +880,42 @@ export default function MedicalHistory() {
                         <TableHead>Dosage</TableHead>
                         <TableHead>Frequency</TableHead>
                         <TableHead>Prescribed By</TableHead>
-                        <TableHead className="text-right">Date</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
+
                     <TableBody>
                       {prescriptions.map((p) => (
                         <TableRow key={p.id}>
                           <TableCell className="font-medium">
                             {p.medication}
                           </TableCell>
+
                           <TableCell>{p.dosage}</TableCell>
                           <TableCell>{p.frequency}</TableCell>
-                          <TableCell>{p.prescribedBy}</TableCell>
-                          <TableCell className="text-right">
-                            {formatDate(p.uploadDate)}
+                          <TableCell>{p.prescribedBy || '—'}</TableCell>
+
+                          <TableCell>{formatDate(p.uploadDate)}</TableCell>
+                          <TableCell className="text-right space-x-2">
+                            {p.fileUrl && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  window.open(p.fileUrl, '_blank')
+                                }
+                              >
+                                <Download /> View
+                              </Button>
+                            )}
+                             <Button
+                                variant="destructive"
+                                size="icon"
+                                onClick={() => setItemToDelete({ id: p.id, collectionName: 'prescriptions', fileUrl: p.fileUrl})}
+                              >
+                                <Trash2 />
+                              </Button>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -750,6 +927,7 @@ export default function MedicalHistory() {
               </AccordionContent>
             </AccordionItem>
 
+            {/* ------------ IMAGING ------------ */}
             <AccordionItem value="imaging">
               <AccordionTrigger className="text-lg font-semibold">
                 <div className="flex items-center gap-3">
@@ -757,6 +935,7 @@ export default function MedicalHistory() {
                   Imaging
                 </div>
               </AccordionTrigger>
+
               <AccordionContent>
                 <div className="flex justify-end mb-4">
                   <Button onClick={() => setActiveUpload('imaging')}>
@@ -764,6 +943,7 @@ export default function MedicalHistory() {
                     Upload Imaging Record
                   </Button>
                 </div>
+
                 {loadingImaging ? (
                   <SectionLoader />
                 ) : imagingRecords && imagingRecords.length > 0 ? (
@@ -773,38 +953,57 @@ export default function MedicalHistory() {
                         <TableHead>Type</TableHead>
                         <TableHead>Body Part</TableHead>
                         <TableHead>Result</TableHead>
-                        <TableHead className="text-right">Date</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
+
                     <TableBody>
                       {imagingRecords.map((record) => (
                         <TableRow
                           key={record.id}
-                          className="cursor-pointer hover:bg-muted/30 transition"
-                          onClick={() => {
-                            if (record.fileUrl) {
-                              window.open(
-                                record.fileUrl,
-                                '_blank',
-                                'noopener,noreferrer'
-                              );
-                            } else {
-                              alert('No file found for this record.');
-                            }
-                          }}
                         >
                           <TableCell className="font-medium">
                             <div className="flex items-center gap-2">
                               {iconMap[record.type] || <FileScan />}
-                              <span className="underline text-primary">
+                              <span>
                                 {record.type}
                               </span>
                             </div>
                           </TableCell>
+
                           <TableCell>{record.bodyPart}</TableCell>
                           <TableCell>{record.result || '—'}</TableCell>
-                          <TableCell className="text-right">
+                          <TableCell>
                             {formatDate(record.uploadDate)}
+                          </TableCell>
+                          <TableCell className="text-right space-x-2">
+                            {record.fileUrl && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  if (record.fileUrl) {
+                                    window.open(
+                                      record.fileUrl,
+                                      '_blank',
+                                      'noopener,noreferrer'
+                                    );
+                                  } else {
+                                    alert('No file found for this record.');
+                                  }
+                                }}
+                              >
+                                <Download /> View
+                              </Button>
+                            )}
+                             <Button
+                                variant="destructive"
+                                size="icon"
+                                onClick={() => setItemToDelete({ id: record.id, collectionName: 'imagingRecords', fileUrl: record.fileUrl})}
+                              >
+                                <Trash2 />
+                              </Button>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -816,6 +1015,7 @@ export default function MedicalHistory() {
               </AccordionContent>
             </AccordionItem>
 
+            {/* ------------ LAB RESULTS ------------ */}
             <AccordionItem value="labs">
               <AccordionTrigger className="text-lg font-semibold">
                 <div className="flex items-center gap-3">
@@ -823,6 +1023,7 @@ export default function MedicalHistory() {
                   Lab Results
                 </div>
               </AccordionTrigger>
+
               <AccordionContent>
                 <div className="flex justify-end mb-4">
                   <Button onClick={() => setActiveUpload('lab')}>
@@ -830,6 +1031,7 @@ export default function MedicalHistory() {
                     Upload Lab Result
                   </Button>
                 </div>
+
                 {loadingLabs ? (
                   <SectionLoader />
                 ) : labResults && labResults.length > 0 ? (
@@ -839,23 +1041,48 @@ export default function MedicalHistory() {
                         <TableHead>Test Name</TableHead>
                         <TableHead>Value</TableHead>
                         <TableHead>Reference Range</TableHead>
-                        <TableHead className="text-right">Date</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
+
                     <TableBody>
                       {labResults.map((result) => (
                         <TableRow key={result.id}>
                           <TableCell className="font-medium">
                             {result.testName}
                           </TableCell>
+
                           <TableCell>
                             <Badge variant={'secondary'}>
                               {result.value}
                             </Badge>
                           </TableCell>
+
                           <TableCell>{result.referenceRange}</TableCell>
-                          <TableCell className="text-right">
+
+                          <TableCell>
                             {formatDate(result.uploadDate)}
+                          </TableCell>
+                          <TableCell className="text-right space-x-2">
+                            {result.fileUrl && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  window.open(result.fileUrl, '_blank')
+                                }
+                              >
+                                <Download /> View
+                              </Button>
+                            )}
+                            <Button
+                              variant="destructive"
+                              size="icon"
+                              onClick={() => setItemToDelete({ id: result.id, collectionName: 'labResults', fileUrl: result.fileUrl})}
+                            >
+                              <Trash2 />
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -867,6 +1094,7 @@ export default function MedicalHistory() {
               </AccordionContent>
             </AccordionItem>
 
+            {/* ------------ DOCTOR VISITS ------------ */}
             <AccordionItem value="visits">
               <AccordionTrigger className="text-lg font-semibold">
                 <div className="flex items-center gap-3">
@@ -874,6 +1102,7 @@ export default function MedicalHistory() {
                   Doctor Visits
                 </div>
               </AccordionTrigger>
+
               <AccordionContent>
                 <div className="flex justify-end mb-4">
                   <Button onClick={() => setActiveUpload('visit')}>
@@ -881,6 +1110,7 @@ export default function MedicalHistory() {
                     Upload Visit Summary
                   </Button>
                 </div>
+
                 {loadingVisits ? (
                   <SectionLoader />
                 ) : doctorVisits && doctorVisits.length > 0 ? (
@@ -890,9 +1120,11 @@ export default function MedicalHistory() {
                         <TableHead>Doctor</TableHead>
                         <TableHead>Specialty</TableHead>
                         <TableHead>Reason</TableHead>
-                        <TableHead className="text-right">Date</TableHead>
+                        <TableHead>Date</TableHead>
+                         <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
+
                     <TableBody>
                       {doctorVisits.map((visit) => (
                         <TableRow key={visit.id}>
@@ -901,8 +1133,28 @@ export default function MedicalHistory() {
                           </TableCell>
                           <TableCell>{visit.specialty}</TableCell>
                           <TableCell>{visit.reason}</TableCell>
-                          <TableCell className="text-right">
+                          <TableCell>
                             {formatDate(visit.uploadDate)}
+                          </TableCell>
+                           <TableCell className="text-right space-x-2">
+                             {visit.fileUrl && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  window.open(visit.fileUrl, '_blank')
+                                }
+                              >
+                                <Download /> View
+                              </Button>
+                            )}
+                            <Button
+                              variant="destructive"
+                              size="icon"
+                              onClick={() => setItemToDelete({ id: visit.id, collectionName: 'doctorVisits', fileUrl: visit.fileUrl})}
+                            >
+                              <Trash2 />
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -913,6 +1165,7 @@ export default function MedicalHistory() {
                 )}
               </AccordionContent>
             </AccordionItem>
+
           </Accordion>
         </CardContent>
       </Card>
