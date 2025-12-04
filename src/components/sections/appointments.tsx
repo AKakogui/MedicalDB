@@ -4,19 +4,20 @@ import {
   Card,
   CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
 import { Appointment, Doctor } from '@/lib/types';
 import { format } from 'date-fns';
-import { Building, Clock, Loader, PlusCircle } from 'lucide-react';
+import { Building, Clock, Loader, PlusCircle, Trash2 } from 'lucide-react';
 import {
   useCollection,
   useFirestore,
   useMemoFirebase,
   useUser,
 } from '@/firebase';
-import { addDoc, collection, query } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, query } from 'firebase/firestore';
 import { Button } from '../ui/button';
 import {
   Dialog,
@@ -52,12 +53,44 @@ import { Calendar as CalendarIcon } from 'lucide-react';
 import { Textarea } from '../ui/textarea';
 import { useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
+import { Input } from '../ui/input';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '../ui/alert-dialog';
 
 const appointmentSchema = z.object({
-  doctorId: z.string({ required_error: 'Please select a doctor.' }),
+  doctorName: z
+    .string({ required_error: "Please enter a doctor's name." })
+    .min(1, "Please enter a doctor's name."),
   appointmentDate: z.date({ required_error: 'Please select a date.' }),
+  appointmentTime: z.string().min(1, 'Time is required.'),
   notes: z.string().optional(),
 });
+
+function generateTimeSlots() {
+  const slots = [];
+  for (let i = 8; i < 18; i++) {
+    const hour24 = i < 10 ? `0${i}` : `${i}`;
+    const hour12 = i > 12 ? i - 12 : i === 0 ? 12 : i;
+    const ampm = i < 12 ? 'AM' : 'PM';
+
+    slots.push({ value: `${hour24}:00`, label: `${hour12}:00 ${ampm}` });
+    if (i < 17) {
+      slots.push({ value: `${hour24}:30`, label: `${hour12}:30 ${ampm}` });
+    }
+  }
+  return slots;
+}
+
+const timeSlots = generateTimeSlots();
 
 function NewAppointmentForm({
   doctors,
@@ -73,6 +106,11 @@ function NewAppointmentForm({
 
   const form = useForm<z.infer<typeof appointmentSchema>>({
     resolver: zodResolver(appointmentSchema),
+    defaultValues: {
+      doctorName: '',
+      appointmentTime: '',
+      notes: '',
+    },
   });
 
   async function onSubmit(values: z.infer<typeof appointmentSchema>) {
@@ -80,11 +118,32 @@ function NewAppointmentForm({
     setIsLoading(true);
 
     try {
-      const appointmentsRef = collection(firestore, 'users', user.uid, 'appointments');
+      const appointmentsRef = collection(
+        firestore,
+        'users',
+        user.uid,
+        'appointments'
+      );
+
+      const [hours, minutes] = values.appointmentTime.split(':').map(Number);
+      const combinedDateTime = new Date(values.appointmentDate);
+      combinedDateTime.setHours(hours);
+      combinedDateTime.setMinutes(minutes);
+
+      const doctor = doctors.find(
+        (d) =>
+          `${d.firstName} ${d.lastName}`.toLowerCase() ===
+          values.doctorName.toLowerCase()
+      );
+
       await addDoc(appointmentsRef, {
-        ...values,
+        doctorId: doctor ? doctor.id : values.doctorName, // Save ID if found, otherwise save the name
+        doctorName: values.doctorName,
         patientId: user.uid,
+        appointmentDate: combinedDateTime,
+        notes: values.notes,
       });
+
       toast({
         title: 'Success',
         description: 'Your appointment has been scheduled.',
@@ -107,68 +166,85 @@ function NewAppointmentForm({
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
         <FormField
           control={form.control}
-          name="doctorId"
+          name="doctorName"
           render={({ field }) => (
             <FormItem>
               <FormLabel>Doctor</FormLabel>
-              <Select onValueChange={field.onChange} defaultValue={field.value}>
-                <FormControl>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a doctor" />
-                  </SelectTrigger>
-                </FormControl>
-                <SelectContent>
-                  {doctors.map((doctor) => (
-                    <SelectItem key={doctor.id} value={doctor.id}>
-                      Dr. {doctor.firstName} {doctor.lastName} -{' '}
-                      {doctor.specialization}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <FormControl>
+                <Input placeholder="Dr. John Doe" {...field} />
+              </FormControl>
               <FormMessage />
             </FormItem>
           )}
         />
-        <FormField
-          control={form.control}
-          name="appointmentDate"
-          render={({ field }) => (
-            <FormItem className="flex flex-col">
-              <FormLabel>Date & Time</FormLabel>
-              <Popover>
-                <PopoverTrigger asChild>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+          <FormField
+            control={form.control}
+            name="appointmentDate"
+            render={({ field }) => (
+              <FormItem className="flex flex-col">
+                <FormLabel>Date</FormLabel>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <FormControl>
+                      <Button
+                        variant={'outline'}
+                        className={cn(
+                          'w-full pl-3 text-left font-normal',
+                          !field.value && 'text-muted-foreground'
+                        )}
+                      >
+                        {field.value ? (
+                          format(field.value, 'PPP')
+                        ) : (
+                          <span>Pick a date</span>
+                        )}
+                        <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                      </Button>
+                    </FormControl>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={field.value}
+                      onSelect={field.onChange}
+                      disabled={(date) => date < new Date()}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="appointmentTime"
+            render={({ field }) => (
+              <FormItem className="flex flex-col">
+                <FormLabel>Time</FormLabel>
+                <Select
+                  onValueChange={field.onChange}
+                  defaultValue={field.value}
+                >
                   <FormControl>
-                    <Button
-                      variant={'outline'}
-                      className={cn(
-                        'w-full pl-3 text-left font-normal',
-                        !field.value && 'text-muted-foreground'
-                      )}
-                    >
-                      {field.value ? (
-                        format(field.value, 'PPP')
-                      ) : (
-                        <span>Pick a date</span>
-                      )}
-                      <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                    </Button>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a time" />
+                    </SelectTrigger>
                   </FormControl>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={field.value}
-                    onSelect={field.onChange}
-                    disabled={(date) => date < new Date()}
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+                  <SelectContent>
+                    {timeSlots.map((slot) => (
+                      <SelectItem key={slot.value} value={slot.value}>
+                        {slot.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
         <FormField
           control={form.control}
           name="notes"
@@ -199,6 +275,8 @@ export default function Appointments() {
   const { user } = useUser();
   const firestore = useFirestore();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const { toast } = useToast();
 
   const appointmentsQuery = useMemoFirebase(
     () =>
@@ -219,15 +297,45 @@ export default function Appointments() {
     appointments?.map((a: any) => new Date(a.appointmentDate.seconds * 1000)) ||
     [];
 
-  const getDoctorName = (doctorId: string) => {
-    const doctor = doctors?.find((d) => d.id === doctorId);
+  const getDoctorName = (apt: any) => {
+    if (apt.doctorName) return apt.doctorName;
+    const doctor = doctors?.find((d) => d.id === apt.doctorId);
     return doctor
       ? `Dr. ${doctor.firstName} ${doctor.lastName}`
       : 'Unknown Doctor';
   };
   const getDoctorSpecialty = (doctorId: string) => {
     const doctor = doctors?.find((d) => d.id === doctorId);
-    return doctor ? doctor.specialization : 'Unknown Specialty';
+    return doctor ? doctor.specialization : '';
+  };
+
+  const handleDelete = async (appointmentId: string) => {
+    if (!user) return;
+    setIsDeleting(true);
+
+    try {
+      const appointmentRef = doc(
+        firestore,
+        'users',
+        user.uid,
+        'appointments',
+        appointmentId
+      );
+      await deleteDoc(appointmentRef);
+      toast({
+        title: 'Success',
+        description: 'Appointment cancelled.',
+      });
+    } catch (error) {
+      console.error('Error deleting appointment: ', error);
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Could not cancel the appointment.',
+      });
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   return (
@@ -284,35 +392,70 @@ export default function Appointments() {
                 (a, b) =>
                   a.appointmentDate.seconds - b.appointmentDate.seconds
               )
-              .map((apt) => (
-                <Card key={apt.id} className="bg-background">
-                  <CardHeader>
-                    <CardTitle className="text-lg">
-                      {getDoctorName(apt.doctorId)}
-                    </CardTitle>
-                    <CardDescription>
-                      {getDoctorSpecialty(apt.doctorId)}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-2 text-sm">
-                    <div className="flex items-center gap-2">
-                      <Clock className="size-4 text-muted-foreground" />
-                      <span>
-                        {format(
-                          new Date(apt.appointmentDate.seconds * 1000),
-                          'PPPPp'
-                        )}
-                      </span>
-                    </div>
-                    {apt.notes && (
-                      <div className="flex items-start gap-2">
-                        <Building className="size-4 text-muted-foreground mt-1" />
-                        <p>{apt.notes}</p>
+              .map((apt) => {
+                const specialty = getDoctorSpecialty(apt.doctorId);
+                return (
+                  <Card key={apt.id} className="bg-background">
+                    <CardHeader>
+                      <CardTitle className="text-lg">
+                        {getDoctorName(apt)}
+                      </CardTitle>
+                      {specialty && (
+                        <CardDescription>{specialty}</CardDescription>
+                      )}
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-sm">
+                      <div className="flex items-center gap-2">
+                        <Clock className="size-4 text-muted-foreground" />
+                        <span>
+                          {format(
+                            new Date(apt.appointmentDate.seconds * 1000),
+                            'PPPPp'
+                          )}
+                        </span>
                       </div>
-                    )}
-                  </CardContent>
-                </Card>
-              ))
+                      {apt.notes && (
+                        <div className="flex items-start gap-2">
+                          <Building className="size-4 text-muted-foreground mt-1" />
+                          <p>{apt.notes}</p>
+                        </div>
+                      )}
+                    </CardContent>
+                    <CardFooter className="justify-end">
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button variant="destructive" size="sm">
+                            <Trash2 />
+                            Delete
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              This action cannot be undone. This will permanently
+                              delete this appointment.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => handleDelete(apt.id)}
+                              disabled={isDeleting}
+                            >
+                              {isDeleting ? (
+                                <Loader className="animate-spin" />
+                              ) : (
+                                'Delete'
+                              )}
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </CardFooter>
+                  </Card>
+                );
+              })
           ) : (
             <p className="text-muted-foreground">No upcoming appointments.</p>
           )}

@@ -10,14 +10,13 @@ import {
 import {
   CalendarDays,
   FileText,
-  Stethoscope,
   BrainCircuit,
   Briefcase,
   PlusCircle,
+  FolderKanban,
 } from 'lucide-react';
 import Appointments from '@/components/sections/appointments';
 import MedicalHistory from '@/components/sections/medical-history';
-import DoctorDirectory from '@/components/sections/doctor-directory';
 import SmartSummary from '@/components/sections/smart-summary';
 import {
   Card,
@@ -28,6 +27,7 @@ import {
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
+import MyCases from '@/components/sections/my-cases';
 
 export default function DashboardPage() {
   return (
@@ -65,6 +65,17 @@ export default function DashboardPage() {
                     </Button>
                   </AccordionContent>
                 </AccordionItem>
+                 <AccordionItem value="my-cases">
+                  <AccordionTrigger className="text-lg font-semibold p-4 bg-card rounded-lg border">
+                    <div className="flex items-center gap-3">
+                      <FolderKanban className="text-primary size-6" />
+                      My Cases
+                    </div>
+                  </AccordionTrigger>
+                  <AccordionContent className="p-4">
+                    <MyCases />
+                  </AccordionContent>
+                </AccordionItem>
                 <AccordionItem value="appointments">
                   <AccordionTrigger className="text-lg font-semibold p-4 bg-card rounded-lg border">
                     <div className="flex items-center gap-3">
@@ -85,17 +96,6 @@ export default function DashboardPage() {
                   </AccordionTrigger>
                   <AccordionContent>
                     <MedicalHistory />
-                  </AccordionContent>
-                </AccordionItem>
-                <AccordionItem value="doctor-directory">
-                  <AccordionTrigger className="text-lg font-semibold p-4 bg-card rounded-lg border">
-                    <div className="flex items-center gap-3">
-                      <Stethoscope className="text-primary size-6" />
-                      Doctor Directory
-                    </div>
-                  </AccordionTrigger>
-                  <AccordionContent>
-                    <DoctorDirectory />
                   </AccordionContent>
                 </AccordionItem>
                 <AccordionItem value="smart-summary">

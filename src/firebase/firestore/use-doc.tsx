@@ -10,6 +10,7 @@ import {
 } from 'firebase/firestore';
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
+import type { useMemoFirebase } from '../auth/use-memo-firebase';
 
 /** Utility type to add an 'id' field to a given type T. */
 type WithId<T> = T & { id: string };
@@ -34,7 +35,7 @@ export interface UseDocResult<T> {
  *
  *
  * @template T Optional type for document data. Defaults to any.
- * @param {DocumentReference<DocumentData> | null | undefined} docRef -
+ * @param {ReturnType<typeof useMemoFirebase<DocumentReference<DocumentData>>> | null | undefined} docRef -
  * The Firestore DocumentReference. Waits if null/undefined.
  * @returns {UseDocResult<T>} Object with data, isLoading, error.
  */
@@ -88,6 +89,10 @@ export function useDoc<T = any>(
 
     return () => unsubscribe();
   }, [memoizedDocRef]); // Re-run if the memoizedDocRef changes.
+
+  if (memoizedDocRef && !(memoizedDocRef as any).__memo) {
+    throw new Error('useDoc received a reference that was not created with useMemoFirebase. This will cause infinite loops. Please wrap the reference creation with useMemoFirebase.');
+  }
 
   return { data, isLoading, error };
 }
